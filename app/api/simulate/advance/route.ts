@@ -5,6 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { ingestEvent } from "@/lib/telephony/ingest";
 import { rollMockOutcome, mockEventForOutcome, type MockOutcome } from "@/lib/telephony/mock-provider";
 import type { TelephonyEvent } from "@/lib/telephony/provider";
+import { rateLimit } from "@/lib/rate-limit";
 
 // Advance the currently-ringing call by one attempt, mirroring the sample UI's
 // "Simulate next attempt" button. An operator may force an outcome; otherwise
@@ -17,6 +18,9 @@ export async function POST(req: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+
+  const rl = rateLimit(`simulate:${user.id}`, 60, 60_000);
+  if (!rl.allowed) return NextResponse.json({ error: "too many requests" }, { status: 429 });
 
   const { data: profile } = await supabase
     .from("profiles")

@@ -6,6 +6,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getProvider } from "@/lib/telephony";
 import { ingestEvent } from "@/lib/telephony/ingest";
 import type { TelephonyEvent } from "@/lib/telephony/provider";
+import { rateLimit } from "@/lib/rate-limit";
 
 const schema = z.object({
   customerNumber: z.string().min(6).max(24),
@@ -21,6 +22,10 @@ export async function POST(req: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+
+  // per-user rate limit — prevents accidental double-clicks / abuse (PRD §17)
+  const rl = rateLimit(`outbound:${user.id}`, 20, 60_000);
+  if (!rl.allowed) return NextResponse.json({ error: "too many calls, slow down" }, { status: 429 });
 
   const parsed = schema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {

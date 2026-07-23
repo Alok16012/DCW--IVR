@@ -55,3 +55,14 @@ export function buildEligibleSequence(
       timeout: ra.timeout_override ?? agent.ring_timeout,
     }));
 }
+
+/**
+ * Rotate an ordered list left by `offset` positions. Used for round-robin mode
+ * (PRD §8 / §24): the eligible sequence starts from a different agent each call
+ * so load is distributed fairly instead of always starting at priority 1.
+ */
+export function rotate<T>(arr: T[], offset: number): T[] {
+  if (arr.length === 0) return arr;
+  const k = ((offset % arr.length) + arr.length) % arr.length;
+  return [...arr.slice(k), ...arr.slice(0, k)];
+}

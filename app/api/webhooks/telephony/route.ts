@@ -2,12 +2,20 @@ import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getProvider } from "@/lib/telephony";
 import { ingestEvent } from "@/lib/telephony/ingest";
+import { rateLimit, clientKey, sweep } from "@/lib/rate-limit";
 
 // Inbound telephony webhook (PRD §15). Responsibilities:
 //  - verify signature/credentials (webhook security)
 //  - idempotency: a duplicate providerEventId must not double-process (AC-10)
 //  - acknowledge fast, apply the event to the journey state machine
 export async function POST(req: NextRequest) {
+  sweep();
+  // generous limit — provider bursts are legitimate, but cap abuse
+  const rl = rateLimit(clientKey(req, "webhook"), 120, 10_000);
+  if (!rl.allowed) {
+    return NextResponse.json({ error: "rate limited" }, { status: 429 });
+  }
+
   const provider = getProvider();
   const rawBody = await req.text();
   const headers = Object.fromEntries(req.headers.entries());

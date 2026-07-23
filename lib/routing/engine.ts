@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { getProvider } from "@/lib/telephony";
 import type { TelephonyEvent } from "@/lib/telephony/provider";
 import type { Agent, BusinessNumber, RoutingRule, RoutingRuleAgent } from "@/lib/types";
-import { buildEligibleSequence, type EligibleAgent } from "./eligibility";
+import { buildEligibleSequence, rotate, type EligibleAgent } from "./eligibility";
 import { evaluateOfficeHours } from "./office-hours";
 
 // The routing engine orchestrates a call journey across agent legs (PRD §7–8).
@@ -134,9 +134,24 @@ export async function startCallJourney(
     return { callId, outcome: "missed_no_agents", eligible: [] };
   }
 
-  const { ruleAgents, agentsById } = await loadRoutingContext(db, orgId, ruleId);
+  const { rule, ruleAgents, agentsById } = await loadRoutingContext(db, orgId, ruleId);
   const busy = await busyAgentIds(db, orgId);
-  const eligible = buildEligibleSequence(ruleAgents, agentsById, { now: new Date(), busyAgentIds: busy });
+  let eligible = buildEligibleSequence(ruleAgents, agentsById, { now: new Date(), busyAgentIds: busy });
+
+  // Round-robin (PRD §8/§24): rotate the start of the sequence per call so the
+  // load spreads across agents instead of always starting at priority 1. Offset
+  // is derived statelessly from the number of inbound journeys started today.
+  if (rule?.mode === "round_robin" && eligible.length > 0) {
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    const { count } = await db
+      .from("calls")
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id", orgId)
+      .eq("direction", "inbound")
+      .gte("started_at", startOfDay.toISOString());
+    eligible = rotate(eligible, count ?? 0);
+  }
 
   if (eligible.length === 0) {
     await createCallbackForMissed(db, orgId, callId, input.caller, ruleId);
