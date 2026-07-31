@@ -216,7 +216,15 @@ export class BuzzdialTelephonyProvider implements TelephonyProvider {
       type = "call.completed";
     }
 
-    const callRef = providerCallId ?? `${caller}-${pick(b, "date", "time", "datetime") ?? ""}`;
+    // Buzzdial sends naive IST datetimes ("2026-07-31 17:52:25") — pin the
+    // +05:30 offset so started_at doesn't shift by 5.5h when parsed as UTC.
+    const rawTs = pick(b, "datetime", "date", "call_start_time", "start_time");
+    const timestamp =
+      rawTs && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(rawTs)
+        ? new Date(`${rawTs.replace(" ", "T")}+05:30`).toISOString()
+        : (rawTs ?? new Date().toISOString());
+
+    const callRef = providerCallId ?? `${caller}-${rawTs ?? ""}`;
     return {
       providerEventId:
         pick(b, "event_id", "eventid") ?? `bz-${callRef}-${status || "event"}`,
@@ -228,7 +236,7 @@ export class BuzzdialTelephonyProvider implements TelephonyProvider {
       direction: "inbound",
       durationSeconds: duration ? Number(duration) : undefined,
       recordingRef: pick(b, "recording", "recording_url", "recordingurl"),
-      timestamp: pick(b, "datetime", "date") ?? new Date().toISOString(),
+      timestamp,
       raw: b,
     };
   }

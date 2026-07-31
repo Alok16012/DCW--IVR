@@ -68,6 +68,32 @@ describe("BuzzdialTelephonyProvider", () => {
       expect(a!.providerEventId).toBe(b!.providerEventId); // idempotency key
     });
 
+    it("parses a real Buzzdial trigger payload (no status field, IST datetime)", () => {
+      const p = makeProvider({ BUZZDIAL_AUTH_KEY: "k" });
+      // captured verbatim from a live Buzzdial trigger delivery
+      const ev = p.parseWebhook({
+        token: "secret",
+        call_id: "a0fb5e888bb455a65fbef1143de24756",
+        cust_no: "9852711784",
+        agent_no: "7004054302",
+        datetime: "2026-07-31 17:52:25",
+        duration: "55",
+        agent_name: "Punni()don",
+      });
+      expect(ev).not.toBeNull();
+      // no status param mapped → inferred from duration > 0
+      expect(ev!.type).toBe("call.completed");
+      expect(ev!.durationSeconds).toBe(55);
+      // naive IST datetime pinned to +05:30 → correct UTC instant
+      expect(ev!.timestamp).toBe("2026-07-31T12:22:25.000Z");
+    });
+
+    it("infers a missed call from duration 0 when no status field", () => {
+      const p = makeProvider({ BUZZDIAL_AUTH_KEY: "k" });
+      const ev = p.parseWebhook({ call_id: "bz-9", cust_no: "98", duration: "0" });
+      expect(ev!.type).toBe("leg.no_answer");
+    });
+
     it("rejects a payload with no call reference", () => {
       const p = makeProvider({ BUZZDIAL_AUTH_KEY: "k" });
       expect(p.parseWebhook({ foo: "bar" })).toBeNull();

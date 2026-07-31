@@ -381,6 +381,75 @@ export async function createCallbackForMissed(
 }
 
 /**
+ * Record a call the provider routed end-to-end. Buzzdial's own IVR does the
+ * greeting + hunting itself and posts ONE summary event after the call ends,
+ * so the first time we hear about the call is at completion — create the call
+ * row retroactively so it lands in the call log, reports, and callbacks.
+ */
+async function recordProviderRoutedCall(db: DB, event: TelephonyEvent): Promise<void> {
+  if (!event.caller) return;
+
+  const answered = event.type === "call.completed" || event.type === "leg.answered";
+  const missed =
+    event.type === "leg.no_answer" || event.type === "leg.busy" || event.type === "leg.failed";
+  if (!answered && !missed) return;
+
+  // attribute the connected agent by phone number (compare last 10 digits —
+  // providers send bare numbers, the app stores formatted ones)
+  const digits = (s: string) => s.replace(/\D/g, "").slice(-10);
+  const { data: agents } = await db.from("agents").select("id, organization_id, phone");
+  const agent = event.agentId
+    ? (agents ?? []).find(
+        (a: { phone: string | null }) => a.phone && digits(a.phone) === digits(event.agentId!),
+      )
+    : undefined;
+
+  let orgId: string | null = agent?.organization_id ?? null;
+  if (!orgId) {
+    const { data: org } = await db
+      .from("organizations")
+      .select("id")
+      .order("created_at")
+      .limit(1)
+      .maybeSingle();
+    orgId = org?.id ?? null;
+  }
+  if (!orgId) return;
+
+  const startedAt = event.timestamp ?? new Date().toISOString();
+  const { data: call } = await db
+    .from("calls")
+    .insert({
+      organization_id: orgId,
+      provider_call_id: event.providerCallId,
+      direction: event.direction ?? "inbound",
+      caller: event.caller,
+      destination: event.destination ?? null,
+      status: event.type === "call.completed" ? "completed" : answered ? "answered" : "missed",
+      connected_agent_id: answered ? (agent?.id ?? null) : null,
+      connected_at: answered ? startedAt : null,
+      talk_seconds: event.durationSeconds ?? null,
+      started_at: startedAt,
+      ended_at: event.type === "leg.answered" ? null : new Date().toISOString(),
+    })
+    .select("id")
+    .single();
+  if (!call) return;
+
+  if (missed) {
+    await createCallbackForMissed(db, orgId, call.id, event.caller, null);
+  }
+  if (event.recordingRef) {
+    await db.from("recordings").insert({
+      organization_id: orgId,
+      call_id: call.id,
+      provider_ref: event.recordingRef,
+      duration: event.durationSeconds ?? null,
+    });
+  }
+}
+
+/**
  * Apply a normalized telephony event to the journey state machine. Called by
  * the webhook handler after idempotency + signature checks pass.
  */
@@ -393,7 +462,11 @@ export async function applyTelephonyEvent(db: DB, event: TelephonyEvent): Promis
       `provider_call_id.eq.${event.providerCallId},id.eq.${event.providerCallId}`,
     )
     .maybeSingle();
-  if (!call) return;
+  if (!call) {
+    // no journey started by our engine — the provider routed it end-to-end
+    await recordProviderRoutedCall(db, event);
+    return;
+  }
 
   const { data: attempt } = await db
     .from("call_attempts")
