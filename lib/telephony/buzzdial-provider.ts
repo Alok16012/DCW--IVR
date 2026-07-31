@@ -105,11 +105,11 @@ export class BuzzdialTelephonyProvider implements TelephonyProvider {
     // (sequential/random + sticky agent, configured in the portal). ringAgent
     // is used by our engine for app-driven attempts (e.g. callback retries),
     // where C2C gives the same agent-first bridge.
-    return this.clickToCall(req.agentPhone, req.customerNumber, req.agentId);
+    return this.clickToCall(req.agentPhone, req.customerNumber, req.agentName);
   }
 
   async initiateOutbound(req: OutboundRequest): Promise<ProviderResult> {
-    return this.clickToCall(req.agentPhone, req.customerNumber, req.agentId);
+    return this.clickToCall(req.agentPhone, req.customerNumber, req.agentName);
   }
 
   /** Start/stop number-masked calling via a rented DID (helpdoc "Call Masking"). */
