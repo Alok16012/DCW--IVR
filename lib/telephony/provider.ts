@@ -23,6 +23,7 @@ export type TelephonyEvent = {
   providerCallId: string;
   providerLegId?: string;
   agentId?: string;
+  agentName?: string;
   caller?: string;
   destination?: string;
   direction?: "inbound" | "outbound";

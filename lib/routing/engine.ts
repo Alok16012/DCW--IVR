@@ -397,14 +397,28 @@ async function recordProviderRoutedCall(db: DB, event: TelephonyEvent): Promise<
   if (!answered && !missed) return;
 
   // attribute the connected agent by phone number (compare last 10 digits —
-  // providers send bare numbers, the app stores formatted ones)
+  // providers send bare numbers, the app stores formatted ones). Some Buzzdial
+  // portal "Parameter setup" mappings don't carry a clean agent phone number in
+  // the field we treat as agentId — fall back to a fuzzy name match against
+  // agentName (present on real Buzzdial deliveries) so attribution still lands.
   const digits = (s: string) => s.replace(/\D/g, "").slice(-10);
-  const { data: agents } = await db.from("agents").select("id, organization_id, phone");
-  const agent = event.agentId
+  const normalizeName = (s: string) => s.toLowerCase().replace(/[^a-z]/g, "");
+  const { data: agents } = await db.from("agents").select("id, organization_id, phone, name");
+  let agent = event.agentId
     ? (agents ?? []).find(
         (a: { phone: string | null }) => a.phone && digits(a.phone) === digits(event.agentId!),
       )
     : undefined;
+  if (!agent && event.agentName) {
+    const target = normalizeName(event.agentName);
+    if (target.length >= 3) {
+      agent = (agents ?? []).find((a: { name: string | null }) => {
+        if (!a.name) return false;
+        const candidate = normalizeName(a.name);
+        return candidate.length >= 3 && (target.includes(candidate) || candidate.includes(target));
+      });
+    }
+  }
 
   let orgId: string | null = agent?.organization_id ?? null;
   if (!orgId) {

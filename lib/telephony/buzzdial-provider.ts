@@ -177,6 +177,7 @@ export class BuzzdialTelephonyProvider implements TelephonyProvider {
     const providerCallId = pick(b, "call_id", "callid", "uniqueid", "unique_id", "sid");
     const caller = pick(b, "cust_no", "caller", "caller_no", "from");
     const agentNo = pick(b, "agent_no", "agent", "agent_number");
+    const agentName = pick(b, "agent_name", "agentname");
     if (!providerCallId && !caller) return null;
 
     // Buzzdial trigger events: "received" (answered), "miscall" (missed), or
@@ -236,6 +237,7 @@ export class BuzzdialTelephonyProvider implements TelephonyProvider {
       type,
       providerCallId: callRef,
       agentId: agentNo,
+      agentName,
       caller,
       destination: pick(b, "did", "ivr_no", "to"),
       direction: "inbound",
