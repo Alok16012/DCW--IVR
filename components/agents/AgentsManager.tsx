@@ -2,12 +2,13 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Pencil, Phone, Clock } from "lucide-react";
+import { Plus, Pencil, Trash2, Phone, Clock } from "lucide-react";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { AvailabilityBadge } from "@/components/ui/StatusBadge";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { Modal } from "@/components/ui/Modal";
 import { AgentModal } from "./AgentModal";
 import { useToast } from "@/components/ui/Toast";
 import { initials, maskPhone, cn } from "@/lib/utils";
@@ -30,6 +31,8 @@ export function AgentsManager({
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Agent | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<Agent | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
 
   function openNew() {
     setEditing(null);
@@ -38,6 +41,22 @@ export function AgentsManager({
   function openEdit(a: Agent) {
     setEditing(a);
     setModalOpen(true);
+  }
+
+  async function confirmDelete() {
+    if (!deleting) return;
+    setDeleteBusy(true);
+    try {
+      const res = await fetch(`/api/agents?id=${deleting.id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error((await res.json()).error || "Failed");
+      toast("Agent deleted", "success");
+      setDeleting(null);
+      router.refresh();
+    } catch (err) {
+      toast((err as Error).message, "error");
+    } finally {
+      setDeleteBusy(false);
+    }
   }
 
   async function setAvailability(agentId: string, availability: Availability) {
@@ -91,13 +110,22 @@ export function AgentsManager({
                   </div>
                 </div>
                 {canEdit && (
-                  <button
-                    onClick={() => openEdit(a)}
-                    className="grid size-8 place-items-center rounded-lg text-[var(--text-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)]"
-                    aria-label="Edit agent"
-                  >
-                    <Pencil className="size-3.5" />
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => openEdit(a)}
+                      className="grid size-8 place-items-center rounded-lg text-[var(--text-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)]"
+                      aria-label="Edit agent"
+                    >
+                      <Pencil className="size-3.5" />
+                    </button>
+                    <button
+                      onClick={() => setDeleting(a)}
+                      className="grid size-8 place-items-center rounded-lg text-[var(--text-muted)] hover:bg-[var(--danger-soft)] hover:text-[var(--danger)]"
+                      aria-label="Delete agent"
+                    >
+                      <Trash2 className="size-3.5" />
+                    </button>
+                  </div>
                 )}
               </div>
 
@@ -142,6 +170,31 @@ export function AgentsManager({
 
       {canEdit && (
         <AgentModal open={modalOpen} onClose={() => setModalOpen(false)} agent={editing} teams={teams} />
+      )}
+
+      {canEdit && (
+        <Modal
+          open={!!deleting}
+          onClose={() => (deleteBusy ? null : setDeleting(null))}
+          title="Delete agent"
+          description={`Remove ${deleting?.name ?? "this agent"} from routing? This cannot be undone.`}
+          size="sm"
+          footer={
+            <>
+              <Button variant="secondary" onClick={() => setDeleting(null)} disabled={deleteBusy}>
+                Cancel
+              </Button>
+              <Button variant="danger" onClick={confirmDelete} loading={deleteBusy}>
+                Delete
+              </Button>
+            </>
+          }
+        >
+          <p className="text-sm text-[var(--text-muted)]">
+            The agent will be removed from all routing rules. Past calls and callbacks linked to them will
+            remain but will no longer show this agent as the owner.
+          </p>
+        </Modal>
       )}
     </>
   );

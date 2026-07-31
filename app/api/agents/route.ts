@@ -122,3 +122,37 @@ export async function POST(req: NextRequest) {
   });
   return NextResponse.json({ ok: true, id: data!.id });
 }
+
+export async function DELETE(req: NextRequest) {
+  const auth = await authorize(req);
+  if (auth.error) return auth.error;
+  const { profile } = auth;
+
+  const id = req.nextUrl.searchParams.get("id");
+  if (!id || !z.string().uuid().safeParse(id).success) {
+    return NextResponse.json({ error: "invalid input" }, { status: 400 });
+  }
+
+  const db = createAdminClient();
+  const { data: existing } = await db
+    .from("agents")
+    .select("*")
+    .eq("id", id)
+    .eq("organization_id", profile.organization_id)
+    .maybeSingle();
+  if (!existing) return NextResponse.json({ error: "not found" }, { status: 404 });
+
+  const { error } = await db.from("agents").delete().eq("id", id).eq("organization_id", profile.organization_id);
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  await logAudit(db, {
+    organizationId: profile.organization_id,
+    actorId: profile.id,
+    actorName: profile.name,
+    action: "agent.delete",
+    entity: "agent",
+    entityId: id,
+    oldValues: existing,
+  });
+  return NextResponse.json({ ok: true });
+}
