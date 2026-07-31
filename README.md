@@ -28,8 +28,8 @@ Built by **Blinks AI**.
 
 Next.js 16 (App Router, TypeScript) · Tailwind CSS v4 · Supabase (Postgres + Auth + RLS) ·
 Recharts · Zod · dnd-kit. Telephony sits behind a provider adapter: a **Mock** provider is
-active by default (drives the full engine with no external account) and an **Exotel**
-adapter is code-complete for when a live account is provisioned.
+active by default (drives the full engine with no external account), and **Exotel** and
+**Buzzdial** adapters are code-complete for when a live account is provisioned.
 
 ## Getting started
 
@@ -69,6 +69,36 @@ Open http://localhost:3000. Demo accounts (password `CallRoute@2026`):
 Set `TELEPHONY_PROVIDER=exotel` and add the `EXOTEL_*` credentials. Routing, reporting,
 and callbacks are unchanged — only the call transport switches. Validate leg-transfer
 behavior with a provider proof-of-concept before production (see PRD §23).
+
+## Going live with Buzzdial
+
+Set `TELEPHONY_PROVIDER=buzzdial` and add the `BUZZDIAL_*` credentials from `.env.example`.
+
+With Buzzdial, the **inbound IVR flow lives in the Buzzdial portal**, not in this app:
+greetings, keypress extensions, hunt strategy (sequence/random), sticky agent,
+escalate & busy sound, holiday hours, and voicemail are all configured under
+**IVR Settings**. This app drives outbound click-to-call via Buzzdial's C2C API and
+ingests inbound call events via Buzzdial **Triggers**.
+
+Portal setup:
+
+1. **IVR number** — share your number with Buzzdial support (support@datagenit.com) or
+   convert your business number by diverting calls to your Buzzdial number.
+2. **IVR Settings** — configure Call Flow (hunt strategy, sticky agent), Agents
+   (same phone numbers as the agents in this app), Sound Audio, and SMS templates.
+3. **Trigger → API Trigger** — add a trigger so call events reach this app:
+   - Method: `POST`, Event: `All`
+   - API URL: `https://YOUR-DEPLOYMENT/api/webhooks/telephony`
+   - Parameter setup: map `call_id`, `cust_no`, `agent_no`, `call_type` /`event`,
+     `duration`, `recording` — plus an extra param `token` set to the same value as
+     `BUZZDIAL_WEBHOOK_SECRET` (this authenticates deliveries; without it, unauthenticated
+     posts are rejected in production).
+4. **Auth key** — copy from My Account → My Profile → Authkey into `BUZZDIAL_AUTH_KEY`.
+5. **Call masking (optional)** — rent a DID from your account manager and set
+   `BUZZDIAL_DID_NUMBER` to enable the masking API.
+
+Event mapping: Buzzdial `received` → answered (with duration → completed),
+`miscall` → missed (creates a callback via the normal engine path).
 
 ## Scripts
 

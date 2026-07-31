@@ -86,6 +86,12 @@ export async function POST(req: NextRequest) {
     callerId: agent.phone,
   });
 
+  // real providers (exotel/buzzdial) return their own call id — store it so
+  // subsequent webhooks for this call match our record
+  if (result.providerCallId && result.providerCallId !== providerCallId) {
+    await db.from("calls").update({ provider_call_id: result.providerCallId }).eq("id", call!.id);
+  }
+
   // mock provider: immediately simulate a connected + completed outbound call so
   // it lands in reports. A real provider sends these via webhook over time.
   const connected = Math.random() > 0.15;

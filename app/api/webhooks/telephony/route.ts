@@ -20,6 +20,11 @@ export async function POST(req: NextRequest) {
   const rawBody = await req.text();
   const headers = Object.fromEntries(req.headers.entries());
 
+  // some providers (e.g. Buzzdial triggers) can't send custom headers or body
+  // fields — allow the shared secret as a ?token= query param on the URL
+  const queryToken = req.nextUrl.searchParams.get("token");
+  if (queryToken && !headers["x-webhook-token"]) headers["x-webhook-token"] = queryToken;
+
   if (!provider.verifyWebhook(headers, rawBody)) {
     return NextResponse.json({ error: "invalid signature" }, { status: 401 });
   }

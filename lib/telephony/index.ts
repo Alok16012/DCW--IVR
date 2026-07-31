@@ -1,5 +1,6 @@
 import { MockTelephonyProvider } from "./mock-provider";
 import { ExotelTelephonyProvider } from "./exotel-provider";
+import { BuzzdialTelephonyProvider } from "./buzzdial-provider";
 import type { TelephonyProvider } from "./provider";
 
 let cached: TelephonyProvider | null = null;
@@ -8,7 +9,12 @@ let cached: TelephonyProvider | null = null;
 export function getProvider(): TelephonyProvider {
   if (cached) return cached;
   const choice = (process.env.TELEPHONY_PROVIDER || "mock").toLowerCase();
-  cached = choice === "exotel" ? new ExotelTelephonyProvider() : new MockTelephonyProvider();
+  cached =
+    choice === "exotel"
+      ? new ExotelTelephonyProvider()
+      : choice === "buzzdial"
+        ? new BuzzdialTelephonyProvider()
+        : new MockTelephonyProvider();
   return cached;
 }
 
