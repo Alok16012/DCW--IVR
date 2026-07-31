@@ -36,6 +36,16 @@ export async function POST(req: NextRequest) {
     parsed = Object.fromEntries(new URLSearchParams(rawBody));
   }
 
+  // merge URL query params into the payload as fallback fields — providers
+  // with fixed payloads (Buzzdial triggers) can tag deliveries via the URL,
+  // e.g. a per-event trigger URL ending in &event=miscall
+  if (parsed && typeof parsed === "object") {
+    const p = parsed as Record<string, unknown>;
+    for (const [k, v] of req.nextUrl.searchParams) {
+      if (k !== "token" && !(k in p)) p[k] = v;
+    }
+  }
+
   const event = provider.parseWebhook(parsed, headers);
   if (!event) return NextResponse.json({ error: "unparseable" }, { status: 400 });
 

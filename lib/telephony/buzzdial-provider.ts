@@ -204,9 +204,14 @@ export class BuzzdialTelephonyProvider implements TelephonyProvider {
     // treat it as completion so reports get the talk time.
     let type = statusMap[status];
     if (!type) {
-      // No status field mapped in the portal trigger — infer from duration:
-      // talk time > 0 means the call connected and completed; 0 means missed.
-      if (duration !== undefined) {
+      // No status field mapped in the portal trigger. Prefer agent answer time
+      // (empty on missed calls) — Buzzdial's "duration" includes IVR/ring time,
+      // so a missed call can still carry a non-zero duration.
+      const answerTime = pick(b, "answer_time", "agent_answer_time", "answertime");
+      if (answerTime !== undefined) {
+        const answered = answerTime !== "" && answerTime !== "0" && !answerTime.startsWith("0000-");
+        type = answered ? "call.completed" : "leg.no_answer";
+      } else if (duration !== undefined) {
         type = Number(duration) > 0 ? "call.completed" : "leg.no_answer";
       } else {
         type = "call.initiated";
