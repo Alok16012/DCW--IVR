@@ -104,7 +104,14 @@ export async function getCallDetail(db: SupabaseClient, callId: string): Promise
     })),
     recording: recording ? { provider_ref: recording.provider_ref, duration: recording.duration } : null,
     callback: callback ?? null,
-    connectedAgentName: call.connected_agent_id ? agentName.get(call.connected_agent_id) ?? null : null,
-    initiatedByName: call.initiated_by_agent_id ? agentName.get(call.initiated_by_agent_id) ?? null : null,
+    // fall back to the provider's agent label when the agent isn't in our roster
+    connectedAgentName:
+      (call.connected_agent_id ? agentName.get(call.connected_agent_id) ?? null : null) ??
+      call.provider_agent_name ??
+      null,
+    initiatedByName:
+      (call.initiated_by_agent_id ? agentName.get(call.initiated_by_agent_id) ?? null : null) ??
+      call.provider_agent_name ??
+      null,
   };
 }

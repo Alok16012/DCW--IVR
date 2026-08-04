@@ -48,6 +48,15 @@ function readConfig(): BuzzdialConfig | null {
 /** Buzzdial trigger payloads use flexible param names (portal "Parameter setup").
  *  Accept the documented names plus common aliases so a mis-labelled mapping
  *  still parses. */
+/** Buzzdial sends the portal's agent label verbatim, sometimes with an empty
+ *  "()" placeholder where an extension would go. Drop that noise, keep the
+ *  name as the portal has it. */
+function cleanAgentName(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  const name = raw.replace(/\(\s*\)/g, " ").replace(/\s+/g, " ").trim();
+  return name || undefined;
+}
+
 function pick(b: Record<string, string>, ...keys: string[]): string | undefined {
   for (const k of keys) {
     const hit = b[k] ?? b[k.toLowerCase()] ?? b[k.toUpperCase()];
@@ -236,6 +245,8 @@ export class BuzzdialTelephonyProvider implements TelephonyProvider {
       type,
       providerCallId: callRef,
       agentId: agentNo,
+      agentPhone: agentNo,
+      agentName: cleanAgentName(pick(b, "agent_name", "agentname")),
       caller,
       destination: pick(b, "did", "ivr_no", "to"),
       direction: "inbound",

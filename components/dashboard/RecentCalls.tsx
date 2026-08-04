@@ -63,7 +63,9 @@ export function RecentCalls({
                   </Badge>
                 </TD>
                 <TD className="text-[var(--text-muted)]">
-                  {c.connected_agent_id ? agentNames.get(c.connected_agent_id) ?? "—" : "—"}
+                  {(c.connected_agent_id ? agentNames.get(c.connected_agent_id) : null) ??
+                    c.provider_agent_name ??
+                    "—"}
                 </TD>
                 <TD>
                   <CallStatusBadge status={c.status as CallStatus} />

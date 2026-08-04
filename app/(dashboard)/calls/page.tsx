@@ -99,11 +99,13 @@ export default async function CallsPage({
                       <CallStatusBadge status={c.status as CallStatus} />
                     </TD>
                     <TD className="text-[var(--text-muted)]">
-                      {c.connected_agent_id
-                        ? agentNames.get(c.connected_agent_id) ?? "—"
+                      {(c.connected_agent_id
+                        ? agentNames.get(c.connected_agent_id)
                         : c.initiated_by_agent_id
-                          ? agentNames.get(c.initiated_by_agent_id) ?? "—"
-                          : "—"}
+                          ? agentNames.get(c.initiated_by_agent_id)
+                          : null) ??
+                        c.provider_agent_name ??
+                        "—"}
                     </TD>
                     <TD align="center" className="text-[var(--text-muted)]">{c.attempts_count}</TD>
                     <TD align="right" className="tabular-nums text-[var(--text-muted)]">

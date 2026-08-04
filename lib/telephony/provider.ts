@@ -23,6 +23,10 @@ export type TelephonyEvent = {
   providerCallId: string;
   providerLegId?: string;
   agentId?: string;
+  /** Agent phone/extension as the provider reports it (not our agent UUID). */
+  agentPhone?: string;
+  /** Agent display name from the provider's own roster, when it sends one. */
+  agentName?: string;
   caller?: string;
   destination?: string;
   direction?: "inbound" | "outbound";

@@ -86,6 +86,16 @@ describe("BuzzdialTelephonyProvider", () => {
       expect(ev!.durationSeconds).toBe(55);
       // naive IST datetime pinned to +05:30 → correct UTC instant
       expect(ev!.timestamp).toBe("2026-07-31T12:22:25.000Z");
+      // agent identity survives even though this agent isn't in our roster;
+      // the portal's empty "()" placeholder is dropped
+      expect(ev!.agentName).toBe("Punni don");
+      expect(ev!.agentPhone).toBe("7004054302");
+    });
+
+    it("omits an agent name that is empty or only a placeholder", () => {
+      const p = makeProvider({ BUZZDIAL_AUTH_KEY: "k" });
+      const ev = p.parseWebhook({ call_id: "bz-8", cust_no: "98", agent_name: "()" });
+      expect(ev!.agentName).toBeUndefined();
     });
 
     it("infers a missed call from duration 0 when no status field", () => {

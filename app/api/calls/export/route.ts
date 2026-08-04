@@ -41,8 +41,10 @@ export async function GET(req: NextRequest) {
     caller: c.caller,
     destination: c.destination ?? "",
     status: c.status,
-    connected_agent: c.connected_agent_id ? agentName.get(c.connected_agent_id) ?? "" : "",
-    initiated_by: c.initiated_by_agent_id ? agentName.get(c.initiated_by_agent_id) ?? "" : "",
+    connected_agent:
+      (c.connected_agent_id ? agentName.get(c.connected_agent_id) : null) ?? c.provider_agent_name ?? "",
+    initiated_by:
+      (c.initiated_by_agent_id ? agentName.get(c.initiated_by_agent_id) : null) ?? c.provider_agent_name ?? "",
     attempts: c.attempts_count,
     talk_seconds: c.talk_seconds,
     started_at: c.started_at,

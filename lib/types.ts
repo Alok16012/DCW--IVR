@@ -106,6 +106,9 @@ export type Call = {
   status: CallStatus;
   connected_agent_id: string | null;
   initiated_by_agent_id: string | null;
+  /** Agent identity as the provider reported it, when they aren't in our roster. */
+  provider_agent_name?: string | null;
+  provider_agent_phone?: string | null;
   attempts_count: number;
   talk_seconds: number;
   started_at: string;

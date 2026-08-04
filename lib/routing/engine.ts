@@ -417,23 +417,33 @@ async function recordProviderRoutedCall(db: DB, event: TelephonyEvent): Promise<
   if (!orgId) return;
 
   const startedAt = event.timestamp ?? new Date().toISOString();
-  const { data: call } = await db
-    .from("calls")
-    .insert({
-      organization_id: orgId,
-      provider_call_id: event.providerCallId,
-      direction: event.direction ?? "inbound",
-      caller: event.caller,
-      destination: event.destination ?? null,
-      status: event.type === "call.completed" ? "completed" : answered ? "answered" : "missed",
-      connected_agent_id: answered ? (agent?.id ?? null) : null,
-      connected_at: answered ? startedAt : null,
-      talk_seconds: event.durationSeconds ?? null,
-      started_at: startedAt,
-      ended_at: event.type === "leg.answered" ? null : new Date().toISOString(),
-    })
-    .select("id")
-    .single();
+  const row: Record<string, unknown> = {
+    organization_id: orgId,
+    provider_call_id: event.providerCallId,
+    direction: event.direction ?? "inbound",
+    caller: event.caller,
+    destination: event.destination ?? null,
+    status: event.type === "call.completed" ? "completed" : answered ? "answered" : "missed",
+    connected_agent_id: answered ? (agent?.id ?? null) : null,
+    connected_at: answered ? startedAt : null,
+    talk_seconds: event.durationSeconds ?? null,
+    started_at: startedAt,
+    ended_at: event.type === "leg.answered" ? null : new Date().toISOString(),
+    // keep the provider's own agent identity — the agent who took the call may
+    // not exist in our roster (provider-side IVR), and without this the call
+    // would show no agent at all
+    provider_agent_name: event.agentName ?? null,
+    provider_agent_phone: event.agentPhone ?? event.agentId ?? null,
+  };
+
+  let { data: call, error } = await db.from("calls").insert(row).select("id").single();
+  if (error?.code === "PGRST204") {
+    // migration 0003 not applied yet — record the call without the provider
+    // agent columns rather than losing it
+    delete row.provider_agent_name;
+    delete row.provider_agent_phone;
+    ({ data: call } = await db.from("calls").insert(row).select("id").single());
+  }
   if (!call) return;
 
   if (missed) {
