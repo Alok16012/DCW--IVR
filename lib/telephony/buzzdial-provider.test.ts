@@ -87,8 +87,8 @@ describe("BuzzdialTelephonyProvider", () => {
       // naive IST datetime pinned to +05:30 → correct UTC instant
       expect(ev!.timestamp).toBe("2026-07-31T12:22:25.000Z");
       // agent identity survives even though this agent isn't in our roster;
-      // the portal's empty "()" placeholder is dropped
-      expect(ev!.agentName).toBe("Punni don");
+      // Buzzdial's "Name(extension)suffix" label is reduced to the name
+      expect(ev!.agentName).toBe("Punni");
       expect(ev!.agentPhone).toBe("7004054302");
     });
 

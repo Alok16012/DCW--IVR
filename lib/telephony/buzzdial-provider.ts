@@ -45,12 +45,13 @@ function readConfig(): BuzzdialConfig | null {
   };
 }
 
-/** Buzzdial sends the portal's agent label verbatim, sometimes with an empty
- *  "()" placeholder where an extension would go. Drop that noise, keep the
- *  name as the portal has it. */
+/** Buzzdial sends a composite agent label, not a bare name: the portal formats
+ *  it as "Name(extension)suffix" and leaves the parens empty when there is no
+ *  extension (e.g. "Punni()don"). Keep the leading name only — the trailing
+ *  metadata is not part of the agent's name. */
 function cleanAgentName(raw: string | undefined): string | undefined {
   if (!raw) return undefined;
-  const name = raw.replace(/\(\s*\)/g, " ").replace(/\s+/g, " ").trim();
+  const name = raw.split("(")[0].replace(/\s+/g, " ").trim();
   return name || undefined;
 }
 
