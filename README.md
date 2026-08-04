@@ -28,8 +28,9 @@ Built by **Blinks AI**.
 
 Next.js 16 (App Router, TypeScript) · Tailwind CSS v4 · Supabase (Postgres + Auth + RLS) ·
 Recharts · Zod · dnd-kit. Telephony sits behind a provider adapter: a **Mock** provider is
-active by default (drives the full engine with no external account), and **Exotel** and
-**Buzzdial** adapters are code-complete for when a live account is provisioned.
+active by default (drives the full engine with no external account), and **Exotel**,
+**Buzzdial** and **MyOperator** adapters are code-complete for when a live account is
+provisioned.
 
 ## Getting started
 
@@ -99,6 +100,45 @@ Portal setup:
 
 Event mapping: Buzzdial `received` → answered (with duration → completed),
 `miscall` → missed (creates a callback via the normal engine path).
+
+## Going live with MyOperator
+
+Set `TELEPHONY_PROVIDER=myoperator` and add the `MYOPERATOR_*` credentials from
+`.env.example`.
+
+As with Buzzdial, **the IVR call flow lives in the MyOperator panel, not in this
+app** — menus, greetings/audio, department hunting order, sticky agent, office
+hours and voicemail are all dashboard-only; MyOperator publishes no API to
+create or edit them. What the API does give us is click-to-call, agent lookup,
+call logs, recordings, and a much richer webhook feed than Buzzdial: v2 events
+carry a per-leg `legs[]` array, so ring durations and per-agent dial results are
+real data rather than guesses.
+
+Panel setup:
+
+1. **Credentials** — APIs & Webhooks → Developer API → Calling APIs gives
+   `Company ID` (`MYOPERATOR_COMPANY_ID`), `x-api-key` (`MYOPERATOR_API_KEY`)
+   and `Authentication` (`MYOPERATOR_SECRET_TOKEN`).
+2. **Public IVR ID** — Call → Outgoing → Campaigns → Create New (a peer-to-peer
+   campaign) mints the id that OBD calls require (`MYOPERATOR_PUBLIC_IVR_ID`).
+3. **Webhook** — APIs & Webhooks → Webhooks → **v2** → Add Webhook:
+   - URL: `https://YOUR-DEPLOYMENT/api/webhooks/telephony`
+   - Events: `call.initiated`, `call.dial_begin`, `call.answered`, `call.end`,
+     `call.summary`
+   - Auth: **API Key**, header name `x-webhook-token`, value =
+     `MYOPERATOR_WEBHOOK_SECRET`
+4. **Agents** — add the same people (and phone numbers) that exist on the app's
+   Agents page, so calls attribute to the right agent.
+
+Event mapping: `call.end`/`call.summary` with status `bridged` → completed;
+`missed`/`voicemail` → missed (creates a callback). `call.end` completes the
+call, and `call.summary` — the only event carrying the agent's name — arrives
+afterwards and is patched onto the same call.
+
+Two things to know: MyOperator sends `recording_filename`, not a URL (exchange
+it via `GET /search/recordings/link`, valid 24h), and a non-2xx response puts a
+delivery into a 26-attempt / 24-hour retry loop, which is why the webhook route
+acknowledges events it doesn't model.
 
 ## Scripts
 

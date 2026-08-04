@@ -47,7 +47,12 @@ export async function POST(req: NextRequest) {
   }
 
   const event = provider.parseWebhook(parsed, headers);
-  if (!event) return NextResponse.json({ error: "unparseable" }, { status: 400 });
+  if (!event) {
+    // Not every delivery maps to a call-state change (MyOperator also posts
+    // disposition/comment events). Acknowledge with 2xx — a non-2xx puts the
+    // delivery into the provider's retry loop (MyOperator: 26 attempts / 24h).
+    return NextResponse.json({ ok: true, ignored: true }, { status: 202 });
+  }
 
   const db = createAdminClient();
   const result = await ingestEvent(db, event, rawBody);

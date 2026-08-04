@@ -74,7 +74,7 @@ export async function startCallJourney(
 
   // resolve the routing rule (from the business number if not given)
   let ruleId = input.routingRuleId ?? null;
-  let businessNumberId = input.businessNumberId ?? null;
+  const businessNumberId = input.businessNumberId ?? null;
   if (!ruleId && businessNumberId) {
     const { data: bn } = await db
       .from("business_numbers")
@@ -382,6 +382,76 @@ export async function createCallbackForMissed(
   }
 }
 
+type MatchedAgent = { id: string; organization_id: string; phone: string | null; name: string | null };
+
+/**
+ * Find the agent an inbound provider event belongs to. Providers identify the
+ * agent inconsistently: Buzzdial sends a bare phone number, MyOperator sends
+ * its own user uuid plus the phone on the leg. Match on phone digits first,
+ * then fall back to a fuzzy name match against agents.name.
+ */
+async function findAgentForEvent(db: DB, event: TelephonyEvent): Promise<MatchedAgent | undefined> {
+  const digits = (s: string) => s.replace(/\D/g, "").slice(-10);
+  const normalizeName = (s: string) => s.toLowerCase().replace(/[^a-z]/g, "");
+  const { data } = await db.from("agents").select("id, organization_id, phone, name");
+  const agents = (data ?? []) as MatchedAgent[];
+
+  // agentId is a provider-native id for some providers (a uuid, not a number),
+  // so only treat it as a phone when it actually looks like one.
+  const phoneCandidates = [event.agentPhone, event.agentId].filter(
+    (v): v is string => !!v && digits(v).length >= 7,
+  );
+  for (const candidate of phoneCandidates) {
+    const hit = agents.find((a) => a.phone && digits(a.phone) === digits(candidate));
+    if (hit) return hit;
+  }
+
+  if (event.agentName) {
+    const target = normalizeName(event.agentName);
+    if (target.length >= 3) {
+      return agents.find((a) => {
+        if (!a.name) return false;
+        const candidate = normalizeName(a.name);
+        return candidate.length >= 3 && (target.includes(candidate) || candidate.includes(target));
+      });
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Fill in agent identity on a call we already recorded. MyOperator splits this
+ * across events — call.end completes the call but carries no agent name, and
+ * call.summary arrives afterwards with the full agent record. Only fills gaps;
+ * never overwrites identity we already resolved.
+ */
+async function patchAgentIdentity(
+  db: DB,
+  call: { id: string; provider_agent_name?: string | null; connected_agent_id: string | null },
+  event: TelephonyEvent,
+): Promise<void> {
+  if (!event.agentName && !event.agentPhone) return;
+
+  const updates: Record<string, unknown> = {};
+  if (event.agentName && !call.provider_agent_name) updates.provider_agent_name = event.agentName;
+  if (event.agentPhone) updates.provider_agent_phone = event.agentPhone;
+
+  if (!call.connected_agent_id) {
+    const agent = await findAgentForEvent(db, event);
+    if (agent) updates.connected_agent_id = agent.id;
+  }
+
+  if (!Object.keys(updates).length) return;
+  const { error } = await db.from("calls").update(updates).eq("id", call.id);
+  if (error?.code === "PGRST204" && updates.connected_agent_id) {
+    // migration 0003 not applied — still salvage the agent link
+    await db
+      .from("calls")
+      .update({ connected_agent_id: updates.connected_agent_id })
+      .eq("id", call.id);
+  }
+}
+
 /**
  * Record a call the provider routed end-to-end. Buzzdial's own IVR does the
  * greeting + hunting itself and posts ONE summary event after the call ends,
@@ -396,29 +466,7 @@ async function recordProviderRoutedCall(db: DB, event: TelephonyEvent): Promise<
     event.type === "leg.no_answer" || event.type === "leg.busy" || event.type === "leg.failed";
   if (!answered && !missed) return;
 
-  // attribute the connected agent by phone number (compare last 10 digits —
-  // providers send bare numbers, the app stores formatted ones). Some Buzzdial
-  // portal "Parameter setup" mappings don't carry a clean agent phone number in
-  // the field we treat as agentId — fall back to a fuzzy name match against
-  // agentName (present on real Buzzdial deliveries) so attribution still lands.
-  const digits = (s: string) => s.replace(/\D/g, "").slice(-10);
-  const normalizeName = (s: string) => s.toLowerCase().replace(/[^a-z]/g, "");
-  const { data: agents } = await db.from("agents").select("id, organization_id, phone, name");
-  let agent = event.agentId
-    ? (agents ?? []).find(
-        (a: { phone: string | null }) => a.phone && digits(a.phone) === digits(event.agentId!),
-      )
-    : undefined;
-  if (!agent && event.agentName) {
-    const target = normalizeName(event.agentName);
-    if (target.length >= 3) {
-      agent = (agents ?? []).find((a: { name: string | null }) => {
-        if (!a.name) return false;
-        const candidate = normalizeName(a.name);
-        return candidate.length >= 3 && (target.includes(candidate) || candidate.includes(target));
-      });
-    }
-  }
+  const agent = await findAgentForEvent(db, event);
 
   let orgId: string | null = agent?.organization_id ?? null;
   if (!orgId) {
@@ -452,8 +500,9 @@ async function recordProviderRoutedCall(db: DB, event: TelephonyEvent): Promise<
     provider_agent_phone: event.agentPhone ?? event.agentId ?? null,
   };
 
-  let { data: call, error } = await db.from("calls").insert(row).select("id").single();
-  if (error?.code === "PGRST204") {
+  const inserted = await db.from("calls").insert(row).select("id").single();
+  let call = inserted.data;
+  if (inserted.error?.code === "PGRST204") {
     // migration 0003 not applied yet — record the call without the provider
     // agent columns rather than losing it
     delete row.provider_agent_name;
@@ -493,6 +542,10 @@ export async function applyTelephonyEvent(db: DB, event: TelephonyEvent): Promis
     await recordProviderRoutedCall(db, event);
     return;
   }
+
+  // later events can carry agent identity the first one lacked (MyOperator's
+  // call.summary follows call.end) — fill the gaps before applying the event
+  await patchAgentIdentity(db, call, event);
 
   const { data: attempt } = await db
     .from("call_attempts")
