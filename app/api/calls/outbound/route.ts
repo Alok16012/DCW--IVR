@@ -81,6 +81,7 @@ export async function POST(req: NextRequest) {
   const result = await getProvider().initiateOutbound({
     callId: call!.id,
     agentId,
+    agentName: agent.name,
     agentPhone: agent.phone,
     customerNumber: parsed.data.customerNumber,
     callerId: agent.phone,

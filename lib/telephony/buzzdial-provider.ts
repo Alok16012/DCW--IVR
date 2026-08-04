@@ -45,9 +45,6 @@ function readConfig(): BuzzdialConfig | null {
   };
 }
 
-/** Buzzdial trigger payloads use flexible param names (portal "Parameter setup").
- *  Accept the documented names plus common aliases so a mis-labelled mapping
- *  still parses. */
 /** Buzzdial sends the portal's agent label verbatim, sometimes with an empty
  *  "()" placeholder where an extension would go. Drop that noise, keep the
  *  name as the portal has it. */
@@ -57,6 +54,9 @@ function cleanAgentName(raw: string | undefined): string | undefined {
   return name || undefined;
 }
 
+/** Buzzdial trigger payloads use flexible param names (portal "Parameter setup").
+ *  Accept the documented names plus common aliases so a mis-labelled mapping
+ *  still parses. */
 function pick(b: Record<string, string>, ...keys: string[]): string | undefined {
   for (const k of keys) {
     const hit = b[k] ?? b[k.toLowerCase()] ?? b[k.toUpperCase()];
@@ -114,11 +114,11 @@ export class BuzzdialTelephonyProvider implements TelephonyProvider {
     // (sequential/random + sticky agent, configured in the portal). ringAgent
     // is used by our engine for app-driven attempts (e.g. callback retries),
     // where C2C gives the same agent-first bridge.
-    return this.clickToCall(req.agentPhone, req.customerNumber, req.agentId);
+    return this.clickToCall(req.agentPhone, req.customerNumber, req.agentName);
   }
 
   async initiateOutbound(req: OutboundRequest): Promise<ProviderResult> {
-    return this.clickToCall(req.agentPhone, req.customerNumber, req.agentId);
+    return this.clickToCall(req.agentPhone, req.customerNumber, req.agentName);
   }
 
   /** Start/stop number-masked calling via a rented DID (helpdoc "Call Masking"). */
@@ -186,6 +186,7 @@ export class BuzzdialTelephonyProvider implements TelephonyProvider {
     const providerCallId = pick(b, "call_id", "callid", "uniqueid", "unique_id", "sid");
     const caller = pick(b, "cust_no", "caller", "caller_no", "from");
     const agentNo = pick(b, "agent_no", "agent", "agent_number");
+    const agentName = pick(b, "agent_name", "agentname");
     if (!providerCallId && !caller) return null;
 
     // Buzzdial trigger events: "received" (answered), "miscall" (missed), or
@@ -246,7 +247,7 @@ export class BuzzdialTelephonyProvider implements TelephonyProvider {
       providerCallId: callRef,
       agentId: agentNo,
       agentPhone: agentNo,
-      agentName: cleanAgentName(pick(b, "agent_name", "agentname")),
+      agentName: cleanAgentName(agentName),
       caller,
       destination: pick(b, "did", "ivr_no", "to"),
       direction: "inbound",

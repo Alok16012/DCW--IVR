@@ -41,6 +41,7 @@ export type RingRequest = {
   callId: string;
   attemptId: string;
   agentId: string;
+  agentName: string;
   agentPhone: string;
   customerNumber: string;
   timeoutSeconds: number;
@@ -49,6 +50,7 @@ export type RingRequest = {
 export type OutboundRequest = {
   callId: string;
   agentId: string;
+  agentName: string;
   agentPhone: string;
   customerNumber: string;
   callerId: string;
