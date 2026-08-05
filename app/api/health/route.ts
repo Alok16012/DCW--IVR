@@ -23,9 +23,51 @@ export async function GET() {
       status: healthy ? "ok" : "degraded",
       db,
       telephony: { provider: provider.name, live: provider.live },
+      webhooks: db === "ok" ? await webhookStats() : null,
       latencyMs: Date.now() - started,
       time: new Date().toISOString(),
     },
     { status: healthy ? 200 : 503 },
   );
+}
+
+/**
+ * Delivery stats for the provider webhook (PRD §19: "webhook failure alerts").
+ * Aggregates only — no payloads or phone numbers — so this stays safe to expose
+ * on the public health check, and makes "is the provider actually calling us?"
+ * answerable without database access.
+ */
+async function webhookStats() {
+  try {
+    const db = createAdminClient();
+    const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+
+    const [{ data: latest }, { count: last24h }, { count: failed24h }] = await Promise.all([
+      db
+        .from("webhook_events")
+        .select("event_type, process_status, received_at")
+        .order("received_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      db
+        .from("webhook_events")
+        .select("id", { count: "exact", head: true })
+        .gte("received_at", dayAgo),
+      db
+        .from("webhook_events")
+        .select("id", { count: "exact", head: true })
+        .gte("received_at", dayAgo)
+        .eq("process_status", "failed"),
+    ]);
+
+    return {
+      lastEventAt: latest?.received_at ?? null,
+      lastEventType: latest?.event_type ?? null,
+      lastEventStatus: latest?.process_status ?? null,
+      received24h: last24h ?? 0,
+      failed24h: failed24h ?? 0,
+    };
+  } catch {
+    return null;
+  }
 }

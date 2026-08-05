@@ -140,11 +140,18 @@ export default async function CallDetailPage({ params }: { params: Promise<{ id:
                     Secure provider recording
                   </div>
                   <p className="mt-1 text-[11px] text-[var(--text-faint)]">
-                    Ref {detail.recording.provider_ref} · {formatDuration(detail.recording.duration)}
+                    {formatDuration(detail.recording.duration)}
                   </p>
-                  <p className="mt-3 text-[11px] leading-relaxed text-[var(--text-muted)]">
-                    Provider URLs are never exposed publicly. Playback uses time-limited
-                    authenticated access when the account is live.
+                  {/* streams via our authenticated route — the provider URL is
+                      never handed to the browser (PRD §18) */}
+                  <audio
+                    controls
+                    preload="none"
+                    className="mt-3 w-full"
+                    src={`/api/recordings/${detail.call.id}`}
+                  />
+                  <p className="mt-2 text-[11px] leading-relaxed text-[var(--text-muted)]">
+                    Playback is authenticated and access-checked per call.
                   </p>
                 </div>
               ) : (
