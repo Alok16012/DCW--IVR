@@ -464,7 +464,11 @@ async function recordProviderRoutedCall(db: DB, event: TelephonyEvent): Promise<
   const answered = event.type === "call.completed" || event.type === "leg.answered";
   const missed =
     event.type === "leg.no_answer" || event.type === "leg.busy" || event.type === "leg.failed";
-  if (!answered && !missed) return;
+  // A start-of-call ping (no outcome yet) still deserves a row — otherwise a
+  // call in progress is invisible until it ends, and if the provider's closing
+  // event never arrives the call is lost entirely.
+  const live = event.type === "call.initiated" || event.type === "leg.ringing";
+  if (!answered && !missed && !live) return;
 
   const agent = await findAgentForEvent(db, event);
 
@@ -487,12 +491,18 @@ async function recordProviderRoutedCall(db: DB, event: TelephonyEvent): Promise<
     direction: event.direction ?? "inbound",
     caller: event.caller,
     destination: event.destination ?? null,
-    status: event.type === "call.completed" ? "completed" : answered ? "answered" : "missed",
+    status: live
+      ? "ringing"
+      : event.type === "call.completed"
+        ? "completed"
+        : answered
+          ? "answered"
+          : "missed",
     connected_agent_id: answered ? (agent?.id ?? null) : null,
     connected_at: answered ? startedAt : null,
     talk_seconds: event.durationSeconds ?? null,
     started_at: startedAt,
-    ended_at: event.type === "leg.answered" ? null : new Date().toISOString(),
+    ended_at: live || event.type === "leg.answered" ? null : new Date().toISOString(),
     // keep the provider's own agent identity — the agent who took the call may
     // not exist in our roster (provider-side IVR), and without this the call
     // would show no agent at all
@@ -556,22 +566,34 @@ export async function applyTelephonyEvent(db: DB, event: TelephonyEvent): Promis
     .limit(1)
     .maybeSingle();
 
+  // Calls the provider routed itself have no attempt rows of ours, so a
+  // no-answer outcome has no journey to advance — close it out directly
+  // instead of leaving the call stuck mid-flight with no callback.
+  const providerRouted = !attempt && call.attempts_count === 0;
+
   switch (event.type) {
     case "leg.answered":
-      if (attempt) await advanceJourney(db, call.id, attempt.id, "answered", { ringSeconds: event.ringSeconds });
+      if (attempt) {
+        await advanceJourney(db, call.id, attempt.id, "answered", { ringSeconds: event.ringSeconds });
+      } else if (providerRouted) {
+        await db
+          .from("calls")
+          .update({ status: "answered", connected_at: new Date().toISOString() })
+          .eq("id", call.id);
+      }
       break;
     case "leg.no_answer":
-      if (attempt) await advanceJourney(db, call.id, attempt.id, "no_answer", { ringSeconds: event.ringSeconds });
-      break;
     case "leg.busy":
-      if (attempt) await advanceJourney(db, call.id, attempt.id, "busy", { ringSeconds: event.ringSeconds });
-      break;
     case "leg.rejected":
-      if (attempt) await advanceJourney(db, call.id, attempt.id, "rejected", { ringSeconds: event.ringSeconds });
+    case "leg.failed": {
+      const outcome = event.type.slice(4) as "no_answer" | "busy" | "rejected" | "failed";
+      if (attempt) {
+        await advanceJourney(db, call.id, attempt.id, outcome, { ringSeconds: event.ringSeconds });
+      } else if (providerRouted && call.status !== "missed") {
+        await finalizeMissed(db, call.organization_id, call.id, call.caller, call.routing_rule_id);
+      }
       break;
-    case "leg.failed":
-      if (attempt) await advanceJourney(db, call.id, attempt.id, "failed", { ringSeconds: event.ringSeconds });
-      break;
+    }
     case "call.completed": {
       const talk = event.durationSeconds ?? call.talk_seconds ?? 0;
       await db

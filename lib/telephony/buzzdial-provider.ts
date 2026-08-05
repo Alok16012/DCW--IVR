@@ -68,6 +68,18 @@ function pick(b: Record<string, string>, ...keys: string[]): string | undefined 
   return undefined;
 }
 
+/** Like pick(), but keeps an empty value. Buzzdial sends `duration: ""` when a
+ *  call was never answered — that empty string is meaningful (it says "this
+ *  call ended with no talk time"), so presence must be distinguishable from
+ *  absence. */
+function pickPresent(b: Record<string, string>, ...keys: string[]): string | undefined {
+  for (const k of keys) {
+    const hit = b[k] ?? b[k.toLowerCase()] ?? b[k.toUpperCase()];
+    if (hit !== undefined) return hit;
+  }
+  return undefined;
+}
+
 export class BuzzdialTelephonyProvider implements TelephonyProvider {
   readonly name = "buzzdial";
   private config = readConfig();
@@ -227,25 +239,29 @@ export class BuzzdialTelephonyProvider implements TelephonyProvider {
       hangup: "call.completed",
       disconnected: "call.completed",
     };
-    const duration = pick(b, "duration", "call_duration", "billsec");
-    // A "received" event carrying a duration means the call already finished —
-    // treat it as completion so reports get the talk time.
+    // The duration FIELD being present means the call has ended — an empty
+    // value just means nobody talked. Absent entirely means this delivery is
+    // the start-of-call ping.
+    const durationRaw = pickPresent(b, "duration", "call_duration", "billsec");
+    const callEnded = durationRaw !== undefined;
+    const duration = callEnded ? Number(durationRaw || 0) || 0 : undefined;
+
     let type = statusMap[status];
     if (!type) {
-      // No status field mapped in the portal trigger. Prefer agent answer time
-      // (empty on missed calls) — Buzzdial's "duration" includes IVR/ring time,
-      // so a missed call can still carry a non-zero duration.
-      const answerTime = pick(b, "answer_time", "agent_answer_time", "answertime");
+      // No status field mapped in the portal trigger — Buzzdial's parameter
+      // list offers none. Prefer agent answer time (empty on missed calls)
+      // because "duration" can include IVR/ring time on some accounts.
+      const answerTime = pickPresent(b, "answer_time", "agent_answer_time", "answertime");
       if (answerTime !== undefined) {
         const answered = answerTime !== "" && answerTime !== "0" && !answerTime.startsWith("0000-");
         type = answered ? "call.completed" : "leg.no_answer";
-      } else if (duration !== undefined) {
-        type = Number(duration) > 0 ? "call.completed" : "leg.no_answer";
+      } else if (callEnded) {
+        type = duration! > 0 ? "call.completed" : "leg.no_answer";
       } else {
         type = "call.initiated";
       }
     }
-    if (type === "leg.answered" && duration && Number(duration) > 0) {
+    if (type === "leg.answered" && duration && duration > 0) {
       type = "call.completed";
     }
 
@@ -259,8 +275,11 @@ export class BuzzdialTelephonyProvider implements TelephonyProvider {
 
     const callRef = providerCallId ?? `${caller}-${rawTs ?? ""}`;
     return {
-      providerEventId:
-        pick(b, "event_id", "eventid") ?? `bz-${callRef}-${status || "event"}`,
+      // Trigger event "All" fires more than once per call and Buzzdial offers
+      // no event-id parameter, so the derived phase has to be part of the key —
+      // otherwise the start ping and the end ping collide and whichever lands
+      // second is discarded as a duplicate, losing the whole call.
+      providerEventId: pick(b, "event_id", "eventid") ?? `bz-${callRef}-${status || type}`,
       type,
       providerCallId: callRef,
       agentId: agentNo,
@@ -269,16 +288,14 @@ export class BuzzdialTelephonyProvider implements TelephonyProvider {
       caller,
       destination: pick(b, "did", "ivr_no", "to"),
       direction: "inbound",
-      durationSeconds: duration ? Number(duration) : undefined,
+      durationSeconds: duration,
       // Buzzdial's trigger "Parameter setup" offers no recording field, so on
       // most accounts nothing arrives here. When the account's recording URL
       // pattern is known (BUZZDIAL_RECORDING_URL_TEMPLATE), fall back to the
       // call id and let recordingUrl() expand it at playback time.
       recordingRef:
         pick(b, "recording", "recording_url", "recordingurl") ??
-        (this.config?.recordingUrlTemplate && duration && Number(duration) > 0
-          ? callRef
-          : undefined),
+        (this.config?.recordingUrlTemplate && duration && duration > 0 ? callRef : undefined),
       timestamp,
       raw: b,
     };

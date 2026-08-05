@@ -105,6 +105,40 @@ describe("BuzzdialTelephonyProvider", () => {
       expect(ev!.type).toBe("leg.no_answer");
     });
 
+    it("treats an EMPTY duration as a call that ended unanswered", () => {
+      // Buzzdial sends duration:"" when nobody picked up. Reading that as
+      // "no duration field" made the call invisible in the app entirely.
+      const p = makeProvider({ BUZZDIAL_AUTH_KEY: "k" });
+      const ev = p.parseWebhook({
+        call_id: "bz-10",
+        cust_no: "9852711784",
+        agent_no: "",
+        agent_name: "",
+        duration: "",
+        datetime: "2026-08-05 18:43:38",
+      });
+      expect(ev!.type).toBe("leg.no_answer");
+      expect(ev!.durationSeconds).toBe(0);
+    });
+
+    it("only reports call.initiated when duration is genuinely absent", () => {
+      const p = makeProvider({ BUZZDIAL_AUTH_KEY: "k" });
+      const ev = p.parseWebhook({ call_id: "bz-11", cust_no: "98" });
+      expect(ev!.type).toBe("call.initiated");
+      expect(ev!.durationSeconds).toBeUndefined();
+    });
+
+    it("gives the start and end deliveries distinct idempotency keys", () => {
+      // trigger event "All" fires twice per call and carries no event id — if
+      // both deliveries hash to the same key the second is dropped as a
+      // duplicate and the completed call never lands
+      const p = makeProvider({ BUZZDIAL_AUTH_KEY: "k" });
+      const start = p.parseWebhook({ call_id: "bz-12", cust_no: "98" });
+      const end = p.parseWebhook({ call_id: "bz-12", cust_no: "98", duration: "42" });
+      expect(start!.providerEventId).not.toBe(end!.providerEventId);
+      expect(start!.providerCallId).toBe(end!.providerCallId); // same call, though
+    });
+
     it("leaves recording empty when the account's URL pattern is unknown", () => {
       const p = makeProvider({ BUZZDIAL_AUTH_KEY: "k" });
       const ev = p.parseWebhook({ call_id: "bz-7", cust_no: "98", duration: "30" });
