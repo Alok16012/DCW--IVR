@@ -279,7 +279,12 @@ export class BuzzdialTelephonyProvider implements TelephonyProvider {
       // no event-id parameter, so the derived phase has to be part of the key —
       // otherwise the start ping and the end ping collide and whichever lands
       // second is discarded as a duplicate, losing the whole call.
-      providerEventId: pick(b, "event_id", "eventid") ?? `bz-${callRef}-${status || type}`,
+      //
+      // Key on the DERIVED type, never the raw status: a call whose status stays
+      // "received" across both pings still changes type (leg.answered ->
+      // call.completed once talk time arrives), and keying on the raw value
+      // would collapse them right back together.
+      providerEventId: pick(b, "event_id", "eventid") ?? `bz-${callRef}-${type}`,
       type,
       providerCallId: callRef,
       agentId: agentNo,

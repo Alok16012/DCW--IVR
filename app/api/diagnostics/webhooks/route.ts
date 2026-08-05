@@ -17,7 +17,7 @@ export async function GET() {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, organization_id")
     .eq("user_id", user.id)
     .single();
   if (profile?.role !== "super_admin") {
@@ -25,13 +25,28 @@ export async function GET() {
   }
 
   const db = createAdminClient();
-  const { data: events } = await db
-    .from("webhook_events")
-    .select("provider_event_id, event_type, process_status, error, received_at, payload")
-    .order("received_at", { ascending: false })
-    .limit(20);
+  const [{ data: events }, { data: calls }, { data: orgs }] = await Promise.all([
+    db
+      .from("webhook_events")
+      .select("provider_event_id, event_type, process_status, error, received_at, payload")
+      .order("received_at", { ascending: false })
+      .limit(20),
+    // read with the admin client on purpose: the point is to reveal calls the
+    // signed-in admin CANNOT see, e.g. ones recorded under a different org
+    db
+      .from("calls")
+      .select("id, provider_call_id, direction, status, started_at, organization_id, talk_seconds")
+      .order("started_at", { ascending: false })
+      .limit(10),
+    db.from("organizations").select("id, name").order("created_at"),
+  ]);
 
   return NextResponse.json({
+    // if a call's organization_id differs from yours, RLS hides it from your
+    // dashboard even though it was recorded correctly
+    yourOrganizationId: profile.organization_id,
+    organizations: orgs ?? [],
+    recentCalls: calls ?? [],
     count: events?.length ?? 0,
     events: (events ?? []).map((e) => ({
       receivedAt: e.received_at,

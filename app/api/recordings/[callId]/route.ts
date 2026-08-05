@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { createAdminClient } from "@/lib/supabase/admin";
 import { getProvider } from "@/lib/telephony";
 import { rateLimit } from "@/lib/rate-limit";
 
@@ -28,8 +27,11 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ callId: str
   const { data: call } = await supabase.from("calls").select("id").eq("id", callId).maybeSingle();
   if (!call) return NextResponse.json({ error: "not found" }, { status: 404 });
 
-  const db = createAdminClient();
-  const { data: recording } = await db
+  // Read the recording through the user's client too. The recordings RLS
+  // policy is deliberately narrower than the calls one (agents can see a call
+  // their phone merely rang on, but are not meant to hear its audio), so
+  // reading this with the service-role client would quietly bypass that.
+  const { data: recording } = await supabase
     .from("recordings")
     .select("provider_ref")
     .eq("call_id", callId)

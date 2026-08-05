@@ -557,13 +557,23 @@ async function recordProviderRoutedCall(db: DB, event: TelephonyEvent): Promise<
  */
 export async function applyTelephonyEvent(db: DB, event: TelephonyEvent): Promise<void> {
   // find the call + latest ringing attempt for this leg
-  const { data: call } = await db
-    .from("calls")
-    .select("*")
-    .or(
-      `provider_call_id.eq.${event.providerCallId},id.eq.${event.providerCallId}`,
-    )
-    .maybeSingle();
+  // calls.id is a uuid column, so an `id.eq.<value>` filter with a non-uuid
+  // value makes Postgres reject the WHOLE query (22P02) — which used to read
+  // as "call not found" and sent every event down the create path. Only ask
+  // about the id when the value could actually be one.
+  const ref = event.providerCallId;
+  const looksLikeUuid = /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i.test(ref);
+  const lookup = db.from("calls").select("*");
+  const { data: call, error: lookupError } = await (looksLikeUuid
+    ? lookup.or(`provider_call_id.eq.${ref},id.eq.${ref}`)
+    : lookup.eq("provider_call_id", ref)
+  ).maybeSingle();
+
+  if (lookupError) {
+    // Never mistake a broken query for "no such call" — that silently forks
+    // into creating a duplicate, which then fails the unique constraint.
+    throw new Error(`call lookup failed for ${ref}: ${lookupError.message}`);
+  }
   if (!call) {
     // no journey started by our engine — the provider routed it end-to-end
     await recordProviderRoutedCall(db, event);
