@@ -101,6 +101,14 @@ Portal setup:
 Event mapping: Buzzdial `received` → answered (with duration → completed),
 `miscall` → missed (creates a callback via the normal engine path).
 
+**Recordings:** Buzzdial's API Trigger parameter list offers no recording field
+(Caller/Called Number, Call Start/End Time, Agent Name/Number, Agent Answer
+Time, Keypress, Extension, Duration, Call ID — that is the whole list), so
+recordings never arrive on the webhook. To play them in the app, open the
+portal's Reports page, copy a recording link, replace the call id with
+`{call_id}` and set it as `BUZZDIAL_RECORDING_URL_TEMPLATE`. Answered calls then
+get a playable recording; without the template the app simply reports none.
+
 ## Going live with MyOperator
 
 Set `TELEPHONY_PROVIDER=myoperator` and add the `MYOPERATOR_*` credentials from

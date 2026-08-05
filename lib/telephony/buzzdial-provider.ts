@@ -32,6 +32,7 @@ type BuzzdialConfig = {
   baseUrl: string;
   webhookSecret?: string;
   didNumber?: string;
+  recordingUrlTemplate?: string;
 };
 
 function readConfig(): BuzzdialConfig | null {
@@ -42,6 +43,7 @@ function readConfig(): BuzzdialConfig | null {
     baseUrl: (process.env.BUZZDIAL_BASE_URL || "https://buzzdial.io").replace(/\/$/, ""),
     webhookSecret: process.env.BUZZDIAL_WEBHOOK_SECRET,
     didNumber: process.env.BUZZDIAL_DID_NUMBER,
+    recordingUrlTemplate: process.env.BUZZDIAL_RECORDING_URL_TEMPLATE,
   };
 }
 
@@ -158,6 +160,21 @@ export class BuzzdialTelephonyProvider implements TelephonyProvider {
     }
   }
 
+  /** Expand a stored reference into a playable recording URL.
+   *
+   *  Buzzdial exposes recordings in the portal but neither the helpdoc APIs nor
+   *  the trigger parameter list provide them, so the account's URL pattern has
+   *  to be supplied once via BUZZDIAL_RECORDING_URL_TEMPLATE — copy a recording
+   *  link from Reports and replace the call id with `{call_id}`, e.g.
+   *  `https://buzzdial.io/recordings/{call_id}.mp3`. Nothing is guessed here:
+   *  with no template configured, playback simply reports no recording. */
+  async recordingUrl(ref: string): Promise<string | null> {
+    if (/^https?:\/\//i.test(ref)) return ref;
+    const template = this.config?.recordingUrlTemplate;
+    if (!template) return null;
+    return template.replace(/\{call_id\}|\{ref\}/g, encodeURIComponent(ref));
+  }
+
   verifyWebhook(headers: Record<string, string>, rawBody: string): boolean {
     // Buzzdial triggers don't sign payloads. We authenticate with a shared
     // secret that the portal's "Parameter setup" appends as `token` (body or
@@ -253,7 +270,15 @@ export class BuzzdialTelephonyProvider implements TelephonyProvider {
       destination: pick(b, "did", "ivr_no", "to"),
       direction: "inbound",
       durationSeconds: duration ? Number(duration) : undefined,
-      recordingRef: pick(b, "recording", "recording_url", "recordingurl"),
+      // Buzzdial's trigger "Parameter setup" offers no recording field, so on
+      // most accounts nothing arrives here. When the account's recording URL
+      // pattern is known (BUZZDIAL_RECORDING_URL_TEMPLATE), fall back to the
+      // call id and let recordingUrl() expand it at playback time.
+      recordingRef:
+        pick(b, "recording", "recording_url", "recordingurl") ??
+        (this.config?.recordingUrlTemplate && duration && Number(duration) > 0
+          ? callRef
+          : undefined),
       timestamp,
       raw: b,
     };

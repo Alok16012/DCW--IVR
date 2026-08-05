@@ -7,6 +7,7 @@ function makeProvider(env: Record<string, string | undefined> = {}) {
     "BUZZDIAL_BASE_URL",
     "BUZZDIAL_WEBHOOK_SECRET",
     "BUZZDIAL_DID_NUMBER",
+    "BUZZDIAL_RECORDING_URL_TEMPLATE",
   ];
   for (const k of keys) delete process.env[k];
   for (const [k, v] of Object.entries(env)) {
@@ -104,9 +105,49 @@ describe("BuzzdialTelephonyProvider", () => {
       expect(ev!.type).toBe("leg.no_answer");
     });
 
+    it("leaves recording empty when the account's URL pattern is unknown", () => {
+      const p = makeProvider({ BUZZDIAL_AUTH_KEY: "k" });
+      const ev = p.parseWebhook({ call_id: "bz-7", cust_no: "98", duration: "30" });
+      expect(ev!.recordingRef).toBeUndefined();
+    });
+
+    it("falls back to the call id as the recording ref once a template is set", () => {
+      const p = makeProvider({
+        BUZZDIAL_AUTH_KEY: "k",
+        BUZZDIAL_RECORDING_URL_TEMPLATE: "https://buzzdial.io/rec/{call_id}.mp3",
+      });
+      const answered = p.parseWebhook({ call_id: "bz-7", cust_no: "98", duration: "30" });
+      expect(answered!.recordingRef).toBe("bz-7");
+      // a missed call has no recording to point at
+      const missed = p.parseWebhook({ call_id: "bz-8", cust_no: "98", duration: "0" });
+      expect(missed!.recordingRef).toBeUndefined();
+    });
+
     it("rejects a payload with no call reference", () => {
       const p = makeProvider({ BUZZDIAL_AUTH_KEY: "k" });
       expect(p.parseWebhook({ foo: "bar" })).toBeNull();
+    });
+  });
+
+  describe("recordingUrl", () => {
+    it("returns nothing when no template is configured", async () => {
+      const p = makeProvider({ BUZZDIAL_AUTH_KEY: "k" });
+      expect(await p.recordingUrl("bz-7")).toBeNull();
+    });
+
+    it("expands the call id into the configured template", async () => {
+      const p = makeProvider({
+        BUZZDIAL_AUTH_KEY: "k",
+        BUZZDIAL_RECORDING_URL_TEMPLATE: "https://buzzdial.io/rec/{call_id}.mp3",
+      });
+      expect(await p.recordingUrl("bz-7")).toBe("https://buzzdial.io/rec/bz-7.mp3");
+    });
+
+    it("passes through a reference that is already a URL", async () => {
+      const p = makeProvider({ BUZZDIAL_AUTH_KEY: "k" });
+      expect(await p.recordingUrl("https://buzzdial.io/rec/x.mp3")).toBe(
+        "https://buzzdial.io/rec/x.mp3",
+      );
     });
   });
 
