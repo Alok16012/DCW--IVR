@@ -22,6 +22,9 @@ export async function GET() {
     {
       status: healthy ? "ok" : "degraded",
       db,
+      // which build is actually serving — answers "is my fix live yet?"
+      // without guessing from deployment timestamps
+      version: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) ?? "local",
       telephony: { provider: provider.name, live: provider.live },
       webhooks: db === "ok" ? await webhookStats() : null,
       latencyMs: Date.now() - started,
