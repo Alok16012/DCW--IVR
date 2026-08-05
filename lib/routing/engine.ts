@@ -384,6 +384,13 @@ export async function createCallbackForMissed(
 
 type MatchedAgent = { id: string; organization_id: string; phone: string | null; name: string | null };
 
+/** Insert a call row, returning both the row and any error for the caller to
+ *  classify (missing column vs duplicate vs genuine failure). */
+async function insertCall(db: DB, row: Record<string, unknown>) {
+  const { data, error } = await db.from("calls").insert(row).select("id").single();
+  return { data, error };
+}
+
 /**
  * Find the agent an inbound provider event belongs to. Providers identify the
  * agent inconsistently: Buzzdial sends a bare phone number, MyOperator sends
@@ -500,7 +507,9 @@ async function recordProviderRoutedCall(db: DB, event: TelephonyEvent): Promise<
           : "missed",
     connected_agent_id: answered ? (agent?.id ?? null) : null,
     connected_at: answered ? startedAt : null,
-    talk_seconds: event.durationSeconds ?? null,
+    // talk_seconds is NOT NULL — a call that hasn't produced talk time yet has
+    // zero of it, not unknown. Passing null here failed the insert outright.
+    talk_seconds: event.durationSeconds ?? 0,
     started_at: startedAt,
     ended_at: live || event.type === "leg.answered" ? null : new Date().toISOString(),
     // keep the provider's own agent identity — the agent who took the call may
@@ -510,14 +519,22 @@ async function recordProviderRoutedCall(db: DB, event: TelephonyEvent): Promise<
     provider_agent_phone: event.agentPhone ?? event.agentId ?? null,
   };
 
-  const inserted = await db.from("calls").insert(row).select("id").single();
-  let call = inserted.data;
-  if (inserted.error?.code === "PGRST204") {
+  let { data: call, error } = await insertCall(db, row);
+  if (error?.code === "PGRST204") {
     // migration 0003 not applied yet — record the call without the provider
     // agent columns rather than losing it
     delete row.provider_agent_name;
     delete row.provider_agent_phone;
-    ({ data: call } = await db.from("calls").insert(row).select("id").single());
+    ({ data: call, error } = await insertCall(db, row));
+  }
+  // another delivery for this same call won the race — it is already recorded
+  if (error?.code === "23505") return;
+  if (error) {
+    // Surface it: a swallowed insert failure here means the call silently
+    // never appears anywhere, which is indistinguishable from "the provider
+    // never called us". Throwing marks the webhook event failed, which the
+    // health check reports.
+    throw new Error(`failed to record provider-routed call: ${error.message}`);
   }
   if (!call) return;
 
