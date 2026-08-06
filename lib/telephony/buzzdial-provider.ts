@@ -47,13 +47,13 @@ function readConfig(): BuzzdialConfig | null {
   };
 }
 
-/** Buzzdial sends a composite agent label, not a bare name: the portal formats
- *  it as "Name(extension)suffix" and leaves the parens empty when there is no
- *  extension (e.g. "Punni()don"). Keep the leading name only — the trailing
- *  metadata is not part of the agent's name. */
+/** Show the agent name the way Buzzdial sends it — the app should mirror the
+ *  portal, not re-invent names. The only cleanup is dropping the empty "()"
+ *  placeholder the portal leaves where an extension would go
+ *  ("Punni()don" -> "Punni don"). */
 function cleanAgentName(raw: string | undefined): string | undefined {
   if (!raw) return undefined;
-  const name = raw.split("(")[0].replace(/\s+/g, " ").trim();
+  const name = raw.replace(/\(\s*\)/g, " ").replace(/\s+/g, " ").trim();
   return name || undefined;
 }
 
@@ -249,12 +249,24 @@ export class BuzzdialTelephonyProvider implements TelephonyProvider {
     let type = statusMap[status];
     if (!type) {
       // No status field mapped in the portal trigger — Buzzdial's parameter
-      // list offers none. Prefer agent answer time (empty on missed calls)
-      // because "duration" can include IVR/ring time on some accounts.
+      // list offers none, so the outcome must be inferred. In order of trust:
+      //
+      //  1. Agent answer time (empty on missed calls) — the cleanest signal.
+      //  2. The agent fields: Buzzdial fills agent_no/agent_name only when an
+      //     agent actually took the call. Duration alone LIES here — a caller
+      //     who sat through the greeting and hung up unanswered still produces
+      //     a non-zero duration (observed live: 39s, no agent = missed).
+      //  3. Duration, only when the payload carries no agent fields at all.
       const answerTime = pickPresent(b, "answer_time", "agent_answer_time", "answertime");
+      const agentFieldMapped =
+        pickPresent(b, "agent_no", "agent", "agent_number") !== undefined ||
+        pickPresent(b, "agent_name", "agentname") !== undefined;
+      const agentConnected = Boolean(agentNo || agentName);
       if (answerTime !== undefined) {
         const answered = answerTime !== "" && answerTime !== "0" && !answerTime.startsWith("0000-");
         type = answered ? "call.completed" : "leg.no_answer";
+      } else if (callEnded && agentFieldMapped) {
+        type = agentConnected ? "call.completed" : "leg.no_answer";
       } else if (callEnded) {
         type = duration! > 0 ? "call.completed" : "leg.no_answer";
       } else {

@@ -88,8 +88,8 @@ describe("BuzzdialTelephonyProvider", () => {
       // naive IST datetime pinned to +05:30 → correct UTC instant
       expect(ev!.timestamp).toBe("2026-07-31T12:22:25.000Z");
       // agent identity survives even though this agent isn't in our roster;
-      // Buzzdial's "Name(extension)suffix" label is reduced to the name
-      expect(ev!.agentName).toBe("Punni");
+      // the name mirrors the portal, minus the empty "()" placeholder
+      expect(ev!.agentName).toBe("Punni don");
       expect(ev!.agentPhone).toBe("7004054302");
     });
 
@@ -103,6 +103,35 @@ describe("BuzzdialTelephonyProvider", () => {
       const p = makeProvider({ BUZZDIAL_AUTH_KEY: "k" });
       const ev = p.parseWebhook({ call_id: "bz-9", cust_no: "98", duration: "0" });
       expect(ev!.type).toBe("leg.no_answer");
+    });
+
+    it("marks a call missed when no agent connected, even with a long duration", () => {
+      // Observed live: the caller sat through the IVR greeting for 39 seconds
+      // and hung up — Buzzdial reported duration 39 with empty agent fields.
+      // Duration alone would have (and did) mislabel this as completed.
+      const p = makeProvider({ BUZZDIAL_AUTH_KEY: "k" });
+      const ev = p.parseWebhook({
+        call_id: "f6e7dcf10bd2f587131a805c1e8e01c8",
+        cust_no: "7004054302",
+        agent_no: "",
+        agent_name: "",
+        datetime: "2026-08-06 23:43:39",
+        duration: "39",
+      });
+      expect(ev!.type).toBe("leg.no_answer"); // -> missed + callback
+    });
+
+    it("marks a call completed when an agent did connect", () => {
+      const p = makeProvider({ BUZZDIAL_AUTH_KEY: "k" });
+      const ev = p.parseWebhook({
+        call_id: "bz-ans",
+        cust_no: "98",
+        agent_no: "7004054302",
+        agent_name: "Punni",
+        duration: "39",
+      });
+      expect(ev!.type).toBe("call.completed");
+      expect(ev!.durationSeconds).toBe(39);
     });
 
     it("treats an EMPTY duration as a call that ended unanswered", () => {
