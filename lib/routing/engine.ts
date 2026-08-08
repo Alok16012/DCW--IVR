@@ -4,6 +4,7 @@ import type { TelephonyEvent } from "@/lib/telephony/provider";
 import type { Agent, BusinessNumber, RoutingRule, RoutingRuleAgent } from "@/lib/types";
 import { buildEligibleSequence, rotate, type EligibleAgent } from "./eligibility";
 import { evaluateOfficeHours } from "./office-hours";
+import { pushLeadToCrm } from "@/lib/crm/push-lead";
 
 // The routing engine orchestrates a call journey across agent legs (PRD §7–8).
 // It is deliberately provider-agnostic: it asks the active TelephonyProvider to
@@ -122,15 +123,13 @@ export async function startCallJourney(
 
   if (!office.open) {
     // Outside hours / holiday: log missed + create one callback (§7.4)
-    await createCallbackForMissed(db, orgId, callId, input.caller, ruleId);
-    await db.from("calls").update({ status: "missed", ended_at: new Date().toISOString() }).eq("id", callId);
+    await finalizeMissed(db, orgId, callId, input.caller, ruleId);
     return { callId, outcome: "missed_closed", eligible: [] };
   }
 
   // build eligible sequence
   if (!ruleId) {
-    await createCallbackForMissed(db, orgId, callId, input.caller, null);
-    await db.from("calls").update({ status: "missed", ended_at: new Date().toISOString() }).eq("id", callId);
+    await finalizeMissed(db, orgId, callId, input.caller, null);
     return { callId, outcome: "missed_no_agents", eligible: [] };
   }
 
@@ -154,8 +153,7 @@ export async function startCallJourney(
   }
 
   if (eligible.length === 0) {
-    await createCallbackForMissed(db, orgId, callId, input.caller, ruleId);
-    await db.from("calls").update({ status: "missed", ended_at: new Date().toISOString() }).eq("id", callId);
+    await finalizeMissed(db, orgId, callId, input.caller, ruleId);
     return { callId, outcome: "missed_no_agents", eligible: [] };
   }
 
@@ -254,6 +252,21 @@ export async function advanceJourney(
       .update({ status: "cancelled", ended_at: new Date().toISOString() })
       .eq("call_id", callId)
       .eq("status", "queued");
+
+    // The agent is only known once someone actually picks up, so this is the
+    // moment the CRM can file the lead under the right counsellor.
+    const { data: answeringAgent } = attempt?.agent_id
+      ? await db.from("agents").select("name, phone").eq("id", attempt.agent_id).maybeSingle()
+      : { data: null };
+    await pushLeadToCrm({
+      caller: call.caller as string,
+      agentName: answeringAgent?.name ?? null,
+      agentPhone: answeringAgent?.phone ?? null,
+      status: "answered",
+      direction: call.direction as string,
+      startedAt: call.started_at as string,
+      callId,
+    });
     return { status: "answered" };
   }
 
@@ -317,6 +330,9 @@ async function finalizeMissed(
     .update({ status: "missed", ended_at: new Date().toISOString() })
     .eq("id", callId);
   await createCallbackForMissed(db, orgId, callId, caller, ruleId);
+  // Nobody took the call, so there is no agent to attribute — the CRM will
+  // round-robin the lead. A missed caller is still a caller worth chasing.
+  await pushLeadToCrm({ caller, status: "missed", callId });
   return { status: "missed" };
 }
 
@@ -541,6 +557,25 @@ async function recordProviderRoutedCall(db: DB, event: TelephonyEvent): Promise<
   if (missed) {
     await createCallbackForMissed(db, orgId, call.id, event.caller, null);
   }
+
+  // Hand the caller to the CRM as a lead, tagged with the agent the provider
+  // says took it, so it lands in that counsellor's list (best-effort).
+  if (!live) {
+    await pushLeadToCrm({
+      caller: event.caller,
+      agentName: event.agentName ?? agent?.name ?? null,
+      agentPhone: event.agentPhone ?? agent?.phone ?? null,
+      status: row.status as string,
+      direction: (event.direction ?? "inbound") as string,
+      durationSeconds: event.durationSeconds ?? 0,
+      startedAt: startedAt,
+      callId: call.id,
+      providerCallId: event.providerCallId,
+      businessNumber: event.destination ?? null,
+      recordingRef: event.recordingRef ?? null,
+    });
+  }
+
   if (event.recordingRef) {
     await db.from("recordings").insert({
       organization_id: orgId,
